@@ -1,51 +1,43 @@
 use std::fs::File;
-use std::io::{ BufReader, BufRead };
+use std::io::{ BufReader, BufRead, Result };
 use serde_json::{ Value, json };
 use chrono::prelude::*;
 
-fn main() -> std::io::Result<()> {
+// Struct to represent a credit card
+struct Card {
+    number: String,
+    exp_date: String,
+    cvv: String,
+}
+
+fn main() -> Result<()> {
     // Open the JSON file and read the contents into a string
-    let file: File = File::open("credit_cards.json")?;
-    let reader: BufReader<File> = BufReader::new(file);
+    let file = File::open("credit_cards.json")?;
+    let reader = BufReader::new(file);
     let contents: String = reader
         .lines()
         .map(|l| l.unwrap())
         .collect();
 
     // Parse the JSON string into a Vec<Card> of credit card objects
-    let cards: Vec<Card> = match serde_json::from_str::<Value>(&contents) {
-        Ok(json) => {
-            let card_node: &Vec<Value> = json.get("credit_cards").unwrap().as_array().unwrap();
-            card_node
-                .iter()
-                .map(|card| {
-                    let card_obj: &serde_json::Map<String, Value> = card.as_object().unwrap();
-                    Card {
-                        number: card_obj.get("CreditCardNumber").unwrap().as_str().unwrap().to_string(),
-                        exp_date: card_obj.get("ExpDate").unwrap().as_str().unwrap().to_string(),
-                        cvv: card_obj.get("CVV").unwrap().as_str().unwrap().to_string(),
-                    }
-                })
-                .collect()
-        }
-        Err(_) => Vec::new(),
-    };
+    let cards = parse_json(&contents);
 
     // Validate each credit card and create a new Vec<Value> of validated credit cards
-    let mut validated_cards: Vec<Value> = Vec::new();
-    for card in cards {
+    let validated_cards: Vec<Value> = cards.iter().filter_map(|card| {
         let is_valid = validate_card(&card.number, &card.exp_date, &card.cvv);
         let brand = get_brand(&card.number);
-        let validated_card =
-            json!({
-            "card_number": card.number,
-            "exp_date": card.exp_date,
-            "cvv": card.cvv,
-            "brand": brand,
-            "valid": is_valid,
-        });
-        validated_cards.push(validated_card);
-    }
+        if is_valid {
+            Some(json!({
+                "card_number": card.number,
+                "exp_date": card.exp_date,
+                "cvv": card.cvv,
+                "brand": brand,
+                "valid": is_valid
+            }))
+        } else {
+            None
+        }
+    }).collect();
 
     // Write the validated credit cards to a new JSON file
     let result: Value = json!({
@@ -57,11 +49,23 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 
-// Struct to represent a credit card
-struct Card {
-    number: String,
-    exp_date: String,
-    cvv: String,
+// Parses the JSON string and returns a vector of Card objects
+fn parse_json(json_str: &str) -> Vec<Card> {
+    let cards: Vec<Card> = match serde_json::from_str::<Value>(json_str) {
+        Ok(json) => {            
+            let card_node: &Vec<Value> = json.get("credit_cards").unwrap().as_array().unwrap();
+            card_node.iter().filter_map(|card| {                
+                let card_obj: &serde_json::Map<String, Value> = card.as_object().unwrap();
+                Some(Card {
+                    number: card_obj.get("CreditCardNumber").unwrap().as_str().unwrap().to_string(),
+                    exp_date: card_obj.get("ExpDate").unwrap().as_str().unwrap().to_string(),
+                    cvv: card_obj.get("CVV").unwrap().as_str().unwrap().to_string()
+                })               
+            }).collect()
+        },
+        Err(_) => Vec::new(),
+    };
+    cards
 }
 
 // Function to validate a credit card number, expiration date, and CVV code
@@ -75,7 +79,7 @@ fn validate_card(card_number: &str, expiration_date: &str, cvv: &str) -> bool {
         return false;
     }
 
-    let check_digit: u32 = digits.pop().unwrap();
+    let check_digit: u32 = digits.pop().unwrap();   
     let sum: u32 = digits
         .iter()
         .rev()
@@ -127,9 +131,9 @@ fn get_brand(card_number: &str) -> &str {
         "American Express"
     } else if card_number.starts_with("67") {
         "Maestro"
-    }else if card_number.starts_with("65") || card_number.starts_with("64") {
+    } else if card_number.starts_with("65") || card_number.starts_with("64") {
         "Discover"
-    }else {
+    } else {
         "Unknown"
     }
 }
